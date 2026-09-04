@@ -1,0 +1,1119 @@
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { auth, db } from "../firebase";
+import { collection, getDocs, getDoc, doc, setDoc, updateDoc, serverTimestamp, query, orderBy, onSnapshot, writeBatch, increment } from "firebase/firestore";
+import { Package, RotateCcw, RefreshCcw, Clock, CheckCircle, ShieldAlert, X, IndianRupee, Camera, Eye } from "lucide-react";
+import { getPlaceholderImage } from "../utils/placeholder";
+
+const formatStatus = (status) => {
+  if (!status) return "";
+  return status
+    .replace(/_/g, ' ')
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+};
+
+export default function Dashboard() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Return Request Modal State
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [returnReason, setReturnReason] = useState("Damaged Product");
+  const [comments, setComments] = useState("");
+  const [bankDetails, setBankDetails] = useState({
+    name: "",
+    accNo: "",
+    bankName: "",
+    ifsc: ""
+  });
+  const [imageLink, setImageLink] = useState("");
+  const [imageFile, setImageFile] = useState(null);
+  const [returnItems, setReturnItems] = useState([]);
+  const [submittingReturn, setSubmittingReturn] = useState(false);
+
+  // Exchange Request Modal State
+  const [exchangeOrder, setExchangeOrder] = useState(null);
+  const [exchangeReason, setExchangeReason] = useState("Size Issue");
+  const [exchangeComments, setExchangeComments] = useState("");
+  const [exchangeItems, setExchangeItems] = useState([]);
+  const [exchangeImageFile, setExchangeImageFile] = useState(null);
+  const [submittingExchange, setSubmittingExchange] = useState(false);
+  const [productVariantsCache, setProductVariantsCache] = useState({});
+
+  useEffect(() => {
+    let unsubscribeOrders = null;
+    const unsubscribeAuth = auth.onAuthStateChanged((currentUser) => {
+      if (!currentUser) {
+        navigate("/auth");
+        return;
+      }
+      setUser(currentUser);
+      unsubscribeOrders = setupOrdersListener(currentUser.uid);
+    });
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeOrders) unsubscribeOrders();
+    };
+  }, [navigate]);
+
+  const setupOrdersListener = (uid) => {
+    setLoading(true);
+    const ordersRef = collection(db, "users", uid, "orders");
+    
+    // Try to listen with orderBy. If it fails, fallback to unordered.
+    // Note: onSnapshot errors cannot be caught with try/catch, they are passed to the error callback.
+    let q = query(ordersRef, orderBy("createdAt", "desc"));
+    
+    const unsubscribe = onSnapshot(q, (snap) => {
+      processSnapshot(snap, uid);
+    }, (err) => {
+      if (err.message.includes("index")) {
+        console.warn("Index not ready yet, falling back to unordered real-time listener:", err);
+        const fallbackUnsubscribe = onSnapshot(ordersRef, (fallbackSnap) => {
+          processSnapshot(fallbackSnap, uid);
+        });
+        return fallbackUnsubscribe;
+      } else {
+        console.error("Error in real-time orders listener:", err);
+        setLoading(false);
+      }
+    });
+    
+    return unsubscribe;
+  };
+
+  const processSnapshot = (snap, uid) => {
+      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Sort manually as fallback
+      data.sort((a, b) => {
+        const tA = a.createdAt ? (a.createdAt.seconds ? a.createdAt.seconds * 1000 : Number(a.createdAt)) : 0;
+        const tB = b.createdAt ? (b.createdAt.seconds ? b.createdAt.seconds * 1000 : Number(b.createdAt)) : 0;
+        return tB - tA;
+      });
+
+      // Self-healing migration for legacy orders to support the mobile app schema
+      const repairedData = [];
+      for (let order of data) {
+        let needsUpdate = false;
+        const updates = {};
+
+        // 1. userId / user_id
+        if (!order.userId) {
+          updates.userId = uid;
+          order.userId = uid;
+          needsUpdate = true;
+        }
+
+        // 2. orderId / order_id
+        if (!order.orderId) {
+          updates.orderId = order.id;
+          order.orderId = order.id;
+          needsUpdate = true;
+        }
+
+        // 3. quantity (int)
+        if (order.quantity === undefined || order.quantity === null || typeof order.quantity !== "number") {
+          const calculatedQty = order.products?.reduce((sum, p) => sum + (Number(p.quantity) || 1), 0) || 1;
+          updates.quantity = Number(calculatedQty);
+          order.quantity = Number(calculatedQty);
+          needsUpdate = true;
+        }
+
+        // 4. totalAmount (double)
+        if (order.totalAmount === undefined || order.totalAmount === null || typeof order.totalAmount !== "number") {
+          const amt = Number(order.totalAmount) || 0.0;
+          updates.totalAmount = amt;
+          order.totalAmount = amt;
+          needsUpdate = true;
+        }
+
+        // 5. phoneNumber (int)
+        const rawPhone = order.phoneNumber !== undefined && order.phoneNumber !== null ? order.phoneNumber : order.customerPhone;
+        const parsedPhone = typeof rawPhone === "number" ? rawPhone : (parseInt(String(rawPhone || "").replace(/\D/g, ""), 10) || 0);
+        if (order.phoneNumber === undefined || order.phoneNumber !== null || typeof order.phoneNumber !== "number" || order.phoneNumber !== parsedPhone) {
+          updates.phoneNumber = parsedPhone;
+          order.phoneNumber = parsedPhone;
+          needsUpdate = true;
+        }
+
+        // 6. latitude & longitude (double)
+        if (order.latitude === undefined || order.latitude === null || typeof order.latitude !== "number") {
+          updates.latitude = 0.0;
+          order.latitude = 0.0;
+          needsUpdate = true;
+        }
+        if (order.longitude === undefined || order.longitude === null || typeof order.longitude !== "number") {
+          updates.longitude = 0.0;
+          order.longitude = 0.0;
+          needsUpdate = true;
+        }
+
+        // 7. deliveryCharges & shippingCharges (double)
+        if (order.deliveryCharges === undefined || order.deliveryCharges === null || typeof order.deliveryCharges !== "number") {
+          const delCharges = Number(order.shippingCharges) || 0.0;
+          updates.deliveryCharges = delCharges;
+          order.deliveryCharges = delCharges;
+          needsUpdate = true;
+        }
+        if (order.shippingCharges !== undefined && order.shippingCharges !== null && typeof order.shippingCharges !== "number") {
+          const shipCharges = Number(order.shippingCharges) || 0.0;
+          updates.shippingCharges = shipCharges;
+          order.shippingCharges = shipCharges;
+          needsUpdate = true;
+        }
+
+        // 8. paymentMethod (String)
+        if (!order.paymentMethod) {
+          const payMethod = order.status === "COD" ? "COD" : "Prepaid";
+          updates.paymentMethod = payMethod;
+          order.paymentMethod = payMethod;
+          needsUpdate = true;
+        }
+
+        // 9. orderDate (Timestamp)
+        if (!order.orderDate) {
+          const fallbackDate = order.createdAt || serverTimestamp();
+          updates.orderDate = fallbackDate;
+          order.orderDate = fallbackDate;
+          needsUpdate = true;
+        }
+
+        // 10. Products check
+        if (order.products && Array.isArray(order.products)) {
+          let productsUpdated = false;
+          const updatedProducts = order.products.map(p => {
+            let pChanged = false;
+            const updatedP = { ...p };
+
+            if (!updatedP.productid) {
+              updatedP.productid = updatedP.id || "";
+              pChanged = true;
+            }
+            if (updatedP.price !== undefined && typeof updatedP.price !== "number") {
+              updatedP.price = Number(updatedP.price) || 0.0;
+              pChanged = true;
+            }
+            if (updatedP.salePrice !== undefined && typeof updatedP.salePrice !== "number") {
+              updatedP.salePrice = Number(updatedP.salePrice) || 0.0;
+              pChanged = true;
+            }
+            if (updatedP.quantity !== undefined && typeof updatedP.quantity !== "number") {
+              updatedP.quantity = Number(updatedP.quantity) || 1;
+              pChanged = true;
+            }
+            if (!updatedP.images || !Array.isArray(updatedP.images)) {
+              updatedP.images = updatedP.image ? [updatedP.image] : [];
+              pChanged = true;
+            }
+
+            if (pChanged) {
+              productsUpdated = true;
+            }
+            return updatedP;
+          });
+
+          if (productsUpdated) {
+            updates.products = updatedProducts;
+            order.products = updatedProducts;
+            needsUpdate = true;
+          }
+        }
+
+        if (needsUpdate) {
+          const orderDocRef = doc(db, "users", uid, "orders", order.id);
+          updateDoc(orderDocRef, updates).then(() => {
+            console.log(`Self-healing: successfully migrated order ${order.id} to Flutter-compatible schema.`);
+          }).catch(err => {
+            console.error(`Self-healing: failed to migrate order ${order.id}:`, err);
+          });
+        }
+
+        repairedData.push(order);
+      }
+
+      setOrders(repairedData);
+      setLoading(false);
+  };
+
+  const checkReturnEligibility = (order) => {
+    const status = (order.orderStatus || order.status || "").toLowerCase();
+    
+    if (status !== "delivered" && status !== "completed") {
+      return false;
+    }
+
+    // Check 7 day limit since creation
+    const orderTime = order.createdAt ? (order.createdAt.seconds ? order.createdAt.seconds * 1000 : Number(order.createdAt)) : Date.now();
+    const diffDays = Math.ceil((Date.now() - orderTime) / (1000 * 60 * 60 * 24));
+    return diffDays <= 7;
+  };
+
+  const checkCancelEligibility = (order) => {
+    const status = (order.orderStatus || order.status || "").toLowerCase();
+    const nonCancellableStatuses = ['shipped', 'delivered', 'return_requested', 'return_approved', 'cancelled', 'refunded'];
+    return !nonCancellableStatuses.includes(status);
+  };
+
+  const handleCancelOrder = async (order) => {
+    if (!window.confirm("Are you sure you want to cancel this order? If prepaid, a refund will be issued automatically.")) return;
+
+    setLoading(true);
+    try {
+      const response = await fetch("https://vistaraa-server.vercel.app/api/cancel-order", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer 006eb537ffea3dafe0e3a16233c449a1e20510e8f3404b1a456f53cf6ca7f371`
+        },
+        body: JSON.stringify({ orderId: order.id, userId: auth.currentUser.uid })
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to cancel order");
+
+      // Restore stock
+      try {
+        const batch = writeBatch(db);
+        if (order.products && Array.isArray(order.products)) {
+          for (const item of order.products) {
+            const prodRef = doc(db, "products", item.id);
+            const prodSnap = await getDoc(prodRef);
+            if (prodSnap.exists()) {
+              const prodData = prodSnap.data();
+              const itemQty = Number(item.quantity) || 1;
+              let updateObj = { stock: increment(itemQty) };
+
+              if (item.variantSize && prodData.sizeVariants && Array.isArray(prodData.sizeVariants)) {
+                const updatedVariants = prodData.sizeVariants.map(v => {
+                  if (v.size === item.variantSize) {
+                    return { ...v, stock: (Number(v.stock) || 0) + itemQty };
+                  }
+                  return v;
+                });
+                updateObj.sizeVariants = updatedVariants;
+              }
+
+              batch.update(prodRef, updateObj);
+            }
+          }
+          await batch.commit();
+        }
+      } catch (stockErr) {
+        console.warn("Failed to restore product stock on cancel: ", stockErr);
+      }
+
+      alert("Order cancelled successfully.");
+    } catch (error) {
+      console.error(error);
+      alert(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReturnInputChange = (e) => {
+    setBankDetails({ ...bankDetails, [e.target.name]: e.target.value });
+  };
+
+  const handleSubmitReturn = async (e) => {
+    e.preventDefault();
+
+    const isPrepaid = selectedOrder?.paymentMethod === "Prepaid" || (selectedOrder?.paymentId && selectedOrder?.paymentId.startsWith("pay_"));
+
+    if (!isPrepaid && (!bankDetails.name || !bankDetails.accNo || !bankDetails.bankName || !bankDetails.ifsc)) {
+      alert("Please fill in all refund bank account details.");
+      return;
+    }
+
+    if (returnItems.length === 0) {
+      alert("Please select at least one item to return.");
+      return;
+    }
+
+    setSubmittingReturn(true);
+
+    try {
+      let finalImageLink = "";
+      if (imageFile) {
+        const formData = new FormData();
+        formData.append("file", imageFile);
+
+        const uploadResponse = await fetch("https://vistaraa-server.vercel.app/api/upload", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer 006eb537ffea3dafe0e3a16233c449a1e20510e8f3404b1a456f53cf6ca7f371`
+          },
+          body: formData
+        });
+
+        if (!uploadResponse.ok) {
+          throw new Error("Failed to upload image. Please try again.");
+        }
+
+        const data = await uploadResponse.json();
+        finalImageLink = data.url;
+      }
+
+      const returnRequestRef = doc(db, "users", user.uid, "return_requests", selectedOrder.id);
+
+      const returnData = {
+        orderId: selectedOrder.id,
+        reason: returnReason,
+        manualReason: comments,
+        bankDetails: {
+          name: bankDetails.name,
+          accNo: bankDetails.accNo,
+          bankName: bankDetails.bankName,
+          ifsc: bankDetails.ifsc
+        },
+        images: finalImageLink ? [finalImageLink] : [getPlaceholderImage(400, 400, "Customer Proof")],
+        status: "pending",
+        returnedItems: returnItems,
+        totalAmount: selectedOrder.totalAmount,
+        createdAt: serverTimestamp()
+      };
+
+      // 1. Write return request to users/{userId}/return_requests/{orderId}
+      await setDoc(returnRequestRef, returnData);
+
+      // 2. Update order products in user orders collection
+      const orderRef = doc(db, "users", user.uid, "orders", selectedOrder.id);
+      
+      const updatedProducts = selectedOrder.products.map(p => {
+        if (returnItems.some(ri => ri.id === p.id && (ri.variantSize === p.variantSize || !p.variantSize))) {
+          return { ...p, returnStatus: 'return_requested' };
+        }
+        return p;
+      });
+
+      const allReturnedOrExchanged = updatedProducts.every(p => p.returnStatus || p.exchangeStatus);
+
+      const orderUpdateData = {
+        products: updatedProducts,
+        orderStatus: allReturnedOrExchanged ? "return_requested" : "partial_return_requested",
+        status: allReturnedOrExchanged ? "RETURN_REQUESTED" : "PARTIAL_RETURN"
+      };
+
+      await updateDoc(orderRef, orderUpdateData);
+
+      // 3. Update root orders collection so admin/seller can see it
+      const rootOrderRef = doc(db, "orders", selectedOrder.id);
+      try {
+        await updateDoc(rootOrderRef, orderUpdateData);
+      } catch (err) {
+        console.warn("Could not update root order:", err);
+      }
+
+      alert("Return request submitted successfully. Our admin team will inspect the proof details.");
+      setSelectedOrder(null);
+
+      // Clear inputs
+      setReturnReason("Damaged Product");
+      setComments("");
+      setReturnItems([]);
+      setBankDetails({ name: "", accNo: "", bankName: "", ifsc: "" });
+      setImageLink("");
+      setImageFile(null);
+    } catch (error) {
+      console.error("Return submission failed:", error);
+      alert("Failed to submit return request. Please try again.");
+    } finally {
+      setSubmittingReturn(false);
+    }
+  };
+
+  const handleToggleReturnItem = (product) => {
+    if (returnItems.some(item => item.id === product.id && (item.variantSize === product.variantSize || !product.variantSize))) {
+      setReturnItems(prev => prev.filter(item => !(item.id === product.id && (item.variantSize === product.variantSize || !product.variantSize))));
+    } else {
+      setReturnItems(prev => [...prev, product]);
+    }
+  };
+
+  const handleToggleExchangeItem = async (product) => {
+    // If selecting an item that hasn't been exchanged yet
+    if (exchangeItems.some(item => item.id === product.id && item.variantKey === (product.variantSize || 'default'))) {
+      setExchangeItems(prev => prev.filter(item => !(item.id === product.id && item.variantKey === (product.variantSize || 'default'))));
+    } else {
+      const variantKey = product.variantSize || 'default';
+      const newItem = { ...product, variantKey, newVariantSize: null };
+      setExchangeItems(prev => [...prev, newItem]);
+
+      const prodId = product.productid || product.id;
+      if (!productVariantsCache[prodId]) {
+        try {
+          const docRef = doc(db, "products", prodId);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            setProductVariantsCache(prev => ({ ...prev, [prodId]: docSnap.data().variants || [] }));
+          }
+        } catch (err) {
+          console.error("Failed to fetch product variants:", err);
+        }
+      }
+    }
+  };
+
+  const handleExchangeVariantSelect = (productId, variantKey, selectedVariant) => {
+    setExchangeItems(prev => prev.map(item => {
+      if (item.id === productId && item.variantKey === variantKey) {
+        // Retain the original purchase price (item.price) to avoid charging the user for price fluctuations over time.
+        // Price differences would only apply if we allowed selecting entirely different products.
+        return { 
+          ...item, 
+          newVariantSize: selectedVariant.size, 
+          newVariantSku: selectedVariant.sku, 
+          newVariantPrice: item.price 
+        };
+      }
+      return item;
+    }));
+  };
+
+  const handleSubmitExchange = async (e) => {
+    e.preventDefault();
+
+    if (exchangeItems.length === 0) {
+      alert("Please select at least one item to exchange.");
+      return;
+    }
+
+    if (!exchangeImageFile) {
+      alert("Please upload an image proof.");
+      return;
+    }
+
+    setSubmittingExchange(true);
+
+    try {
+      let finalImageLink = "";
+      const formData = new FormData();
+      formData.append("file", exchangeImageFile);
+
+      const uploadResponse = await fetch("https://vistaraa-server.vercel.app/api/upload", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer 006eb537ffea3dafe0e3a16233c449a1e20510e8f3404b1a456f53cf6ca7f371`
+        },
+        body: formData
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error("Failed to upload image. Please try again.");
+      }
+
+      const data = await uploadResponse.json();
+      finalImageLink = data.url;
+
+      const payload = {
+        orderId: exchangeOrder.id,
+        userId: user.uid,
+        reason: exchangeReason,
+        manualReason: exchangeComments,
+        itemsToExchange: exchangeItems.map(item => ({
+          ...item,
+          image: finalImageLink // attaching the proof to the item for admin visibility
+        })),
+        images: [finalImageLink]
+      };
+
+      const response = await fetch("https://vistaraa-server.vercel.app/api/request-exchange", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer 006eb537ffea3dafe0e3a16233c449a1e20510e8f3404b1a456f53cf6ca7f371`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to submit exchange");
+      }
+
+      const updatedProducts = exchangeOrder.products.map(p => {
+        if (exchangeItems.some(ei => ei.id === p.id && (ei.variantSize === p.variantSize || !p.variantSize))) {
+          return { ...p, exchangeStatus: 'exchange_requested' };
+        }
+        return p;
+      });
+
+      const allReturnedOrExchanged = updatedProducts.every(p => p.returnStatus || p.exchangeStatus);
+
+      // Also update local order document to reflect status
+      const orderRef = doc(db, "users", user.uid, "orders", exchangeOrder.id);
+      const exchangeUpdateData = {
+        products: updatedProducts,
+        orderStatus: allReturnedOrExchanged ? "exchange_requested" : "partial_exchange_requested",
+        status: allReturnedOrExchanged ? "EXCHANGE_REQUESTED" : "PARTIAL_EXCHANGE"
+      };
+
+      await updateDoc(orderRef, exchangeUpdateData);
+
+      // Also update root orders collection so admin/seller can see it
+      const rootOrderRef = doc(db, "orders", exchangeOrder.id);
+      try {
+        await updateDoc(rootOrderRef, exchangeUpdateData);
+      } catch (err) {
+        console.warn("Could not update root order:", err);
+      }
+
+      alert("Exchange request submitted successfully!");
+      setExchangeOrder(null);
+      setExchangeReason("Size Issue");
+      setExchangeComments("");
+      setExchangeItems([]);
+      setExchangeImageFile(null);
+    } catch (error) {
+      console.error("Exchange submission failed:", error);
+      alert(error.message);
+    } finally {
+      setSubmittingExchange(false);
+    }
+  };
+
+  return (
+    <div style={{ paddingTop: "120px", paddingBottom: "80px", minHeight: "90vh" }}>
+      <div className="container">
+
+        {/* User Info Welcome Banner */}
+        <div className="glass-card" style={{ padding: "32px", marginBottom: "40px", background: "var(--bg-card)", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "20px" }}>
+          <div>
+            <h1 style={{ fontSize: "28px", fontWeight: "800" }}>Hello, {user?.displayName || user?.email?.split("@")[0]}</h1>
+            <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>Manage your account, view shipments, and process refunds.</p>
+          </div>
+          <div style={{ padding: "10px 20px", borderRadius: "14px", border: "1px solid var(--border-color)", fontSize: "13px", fontWeight: "600", color: "var(--text-muted)" }}>
+            Registered email: <span style={{ color: "var(--text-main)", fontWeight: "700" }}>{user?.email}</span>
+          </div>
+        </div>
+
+        <h2 style={{ fontSize: "24px", fontWeight: "800", marginBottom: "24px" }}>Your Order History</h2>
+
+        {loading ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+            {[...Array(2)].map((_, i) => (
+              <div key={i} className="shimmer" style={{ height: "180px", borderRadius: "24px" }}></div>
+            ))}
+          </div>
+        ) : orders.length > 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+            {orders.map((order) => {
+              const dateObj = order.createdAt?.seconds
+                ? new Date(order.createdAt.seconds * 1000)
+                : (order.createdAt ? new Date(order.createdAt) : new Date());
+
+              const isEligibleForReturn = checkReturnEligibility(order);
+
+              return (
+                <div key={order.id} className="glass-card" style={{ padding: "28px", background: "var(--bg-card)", display: "flex", flexDirection: "column", gap: "20px" }}>
+                  {/* Order Header Summary */}
+                  <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "16px", borderBottom: "1px solid var(--border-color)", paddingBottom: "16px" }}>
+                    <div style={{ display: "flex", gap: "24px", flexWrap: "wrap" }}>
+                      <div>
+                        <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", color: "var(--text-muted)" }}>Order Reference</span>
+                        <p style={{ fontWeight: "700", fontSize: "14px" }}>{order.id}</p>
+                      </div>
+                      <div>
+                        <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", color: "var(--text-muted)" }}>Date Placed</span>
+                        <p style={{ fontWeight: "700", fontSize: "14px" }}>{dateObj.toLocaleDateString()}</p>
+                      </div>
+                      <div>
+                        <span style={{ fontSize: "11px", fontWeight: "800", textTransform: "uppercase", color: "var(--text-muted)" }}>Total Paid</span>
+                        <p style={{ fontWeight: "800", fontSize: "14px", color: "var(--primary)" }}>₹{Number(order.totalAmount).toLocaleString()}</p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className={`badge ${(order.orderStatus || "").toLowerCase() === "refunded" ? "badge-out" :
+                        ((order.orderStatus || "").toLowerCase() === "return_approved" ? "badge-new" :
+                          ((order.orderStatus || "").toLowerCase() === "return_requested" ? "badge-sale" : "badge-new"))
+                        }`} style={{ fontSize: "11px", padding: "6px 12px", borderRadius: "8px" }}>
+                        {order.orderStatus ? formatStatus(order.orderStatus) : formatStatus(order.status || "Placed")}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Order Products List */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    {order.products?.map((prod, i) => (
+                      <div key={i} style={{ display: "flex", gap: "16px", alignItems: "center" }}>
+                        <div style={{ width: "60px", height: "60px", borderRadius: "10px", overflow: "hidden", background: "#f1f5f9", flexShrink: 0 }}>
+                          {/* Image lookup from cart items placeholder or static */}
+                          <img src={prod.image || getPlaceholderImage(100, 100, "Vistaraa")} alt={prod.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        </div>
+                        <div style={{ flexGrow: 1 }}>
+                          <h4 style={{ fontSize: "14px", fontWeight: "700" }}>{prod.name}</h4>
+                          <span style={{ fontSize: "12px", color: "var(--text-muted)", display: "block", marginBottom: "4px" }}>
+                            Quantity: {prod.quantity} {prod.variantSize && `| Size: ${prod.variantSize}`}
+                          </span>
+                          
+                          {/* Item Level Badges */}
+                          {prod.returnStatus && (order.orderStatus || "").toLowerCase() !== "refunded" && (order.status || "").toLowerCase() !== "refunded" && (
+                            <span className="badge badge-sale" style={{ fontSize: "10px", padding: "4px 8px", borderRadius: "6px", display: "inline-block", marginRight: "6px" }}>
+                              Return: {formatStatus(prod.returnStatus)}
+                            </span>
+                          )}
+                          {prod.exchangeStatus && (
+                            <span className="badge badge-new" style={{ fontSize: "10px", padding: "4px 8px", borderRadius: "6px", display: "inline-block" }}>
+                              Exchange: {formatStatus(prod.exchangeStatus)}
+                            </span>
+                          )}
+                        </div>
+                        <span style={{ fontWeight: "700", fontSize: "14px" }}>₹{Number(prod.salePrice || prod.price).toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Actions & Shipping Details Footer */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px", paddingTop: "12px", borderTop: "1px solid var(--border-color)", fontSize: "13px" }}>
+                    <div style={{ color: "var(--text-muted)" }}>
+                      Shipment Destination: <span style={{ color: "var(--text-main)", fontWeight: "600" }}>{order.address}, {order.city} - {order.pinCode || order.pincode}</span>
+                    </div>
+
+                    <div style={{ display: "flex", gap: "12px" }}>
+                      {checkCancelEligibility(order) && (
+                        <button
+                          onClick={() => handleCancelOrder(order)}
+                          className="btn btn-secondary"
+                          style={{
+                            padding: "8px 18px",
+                            borderRadius: "10px",
+                            fontSize: "12px",
+                            color: "var(--text-main)",
+                            borderColor: "var(--border-color)"
+                          }}
+                        >
+                          <X size={14} /> Cancel Order
+                        </button>
+                      )}
+
+                      {isEligibleForReturn ? (
+                        <>
+                          <button
+                            onClick={() => setSelectedOrder(order)}
+                            className="btn btn-secondary"
+                            style={{
+                              padding: "8px 18px",
+                              borderRadius: "10px",
+                              fontSize: "12px",
+                              color: "var(--accent)",
+                              borderColor: "rgba(244, 63, 94, 0.2)"
+                            }}
+                          >
+                            <RotateCcw size={14} /> Request Return
+                          </button>
+                          <button
+                            onClick={() => setExchangeOrder(order)}
+                            className="btn btn-secondary"
+                            style={{
+                              padding: "8px 18px",
+                              borderRadius: "10px",
+                              fontSize: "12px",
+                              color: "var(--primary)",
+                              borderColor: "var(--primary)"
+                            }}
+                          >
+                            <RefreshCcw size={14} /> Request Exchange
+                          </button>
+                        </>
+                      ) : order.orderStatus === "return_requested" ? (
+                        <span style={{ color: "var(--warning)", fontWeight: "700", display: "flex", alignItems: "center", gap: "4px" }}>
+                          <Clock size={14} /> Return Under Review
+                        </span>
+                      ) : order.orderStatus === "exchange_requested" ? (
+                        <span style={{ color: "var(--warning)", fontWeight: "700", display: "flex", alignItems: "center", gap: "4px" }}>
+                          <Clock size={14} /> Exchange Under Review
+                        </span>
+                      ) : (order.status || order.orderStatus || "").toLowerCase() === "cancelled" ? (
+                        <span style={{ color: "var(--text-muted)", fontWeight: "700", display: "flex", alignItems: "center", gap: "4px" }}>
+                          <X size={14} /> Cancelled
+                        </span>
+                      ) : order.status === "REFUNDED" ? (
+                        <span style={{ color: "var(--success)", fontWeight: "700", display: "flex", alignItems: "center", gap: "4px" }}>
+                          <CheckCircle size={14} /> Refund Disbursed
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{
+            textAlign: "center",
+            padding: "60px 40px",
+            background: "var(--bg-card)",
+            borderRadius: "24px",
+            border: "1px solid var(--border-color)"
+          }}>
+            <Package size={44} style={{ color: "var(--text-muted)", marginBottom: "16px" }} />
+            <h3 style={{ fontSize: "18px", fontWeight: "700" }}>No Orders Found</h3>
+            <p style={{ color: "var(--text-muted)", marginTop: "6px" }}>You have not placed any orders yet. Visit our shop to browse premium collections.</p>
+            <button onClick={() => navigate("/shop")} className="btn btn-primary" style={{ marginTop: "16px" }}>Go to Shop</button>
+          </div>
+        )}
+      </div>
+
+      {/* RETURN REQUEST POPUP MODAL */}
+      {selectedOrder && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(15, 23, 42, 0.6)",
+          backdropFilter: "blur(4px)",
+          zIndex: 2000,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "20px"
+        }}>
+          <div className="glass-card" style={{
+            width: "100%",
+            maxWidth: "600px",
+            background: "var(--bg-card)",
+            padding: "32px",
+            maxHeight: "90vh",
+            overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
+            gap: "24px"
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border-color)", paddingBottom: "16px" }}>
+              <div>
+                <h3 style={{ fontSize: "20px", fontWeight: "800" }}>Request Return</h3>
+                <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>Order Reference: #{selectedOrder.id}</span>
+              </div>
+              <button onClick={() => setSelectedOrder(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitReturn} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+
+              {/* Items Selection */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                <label style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-muted)" }}>Select Items to Return</label>
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px", border: "1px solid var(--border-color)", borderRadius: "12px", padding: "16px", background: "rgba(0,0,0,0.02)" }}>
+                  {selectedOrder.products?.map((prod, i) => {
+                    const isSelected = returnItems.some(item => item.id === prod.id && (item.variantSize === prod.variantSize || !prod.variantSize));
+                    const isAlreadyReturned = prod.returnStatus || prod.exchangeStatus; // Disable if already requested
+                    
+                    return (
+                      <div key={i} style={{ display: "flex", flexDirection: "column", gap: "12px", borderBottom: i < selectedOrder.products.length - 1 ? "1px solid var(--border-color)" : "none", paddingBottom: i < selectedOrder.products.length - 1 ? "12px" : "0", opacity: isAlreadyReturned ? 0.5 : 1 }}>
+                        <label style={{ display: "flex", gap: "12px", alignItems: "flex-start", cursor: isAlreadyReturned ? "not-allowed" : "pointer" }}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={isAlreadyReturned}
+                            onChange={() => handleToggleReturnItem(prod)}
+                            style={{ marginTop: "4px" }}
+                          />
+                          <div style={{ flexGrow: 1 }}>
+                            <div style={{ fontSize: "14px", fontWeight: "700" }}>{prod.name}</div>
+                            <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                              Size: {prod.variantSize || "Standard"} | Qty: {prod.quantity}
+                              {isAlreadyReturned && <span style={{ color: "var(--warning)", marginLeft: "8px", fontWeight: "600" }}>(Already Requested)</span>}
+                            </div>
+                          </div>
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Return Details */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-muted)" }}>Reason for Return</label>
+                <select
+                  value={returnReason}
+                  onChange={(e) => setReturnReason(e.target.value)}
+                  style={{
+                    padding: "12px",
+                    borderRadius: "12px",
+                    border: "1px solid var(--border-color)",
+                    background: "var(--bg-card)",
+                    color: "var(--text-main)",
+                    outline: "none"
+                  }}
+                >
+                  <option value="Damaged Product">Damaged Product / Broken Box</option>
+                  <option value="Wrong Item Delivered">Wrong Item / Size Delivered</option>
+                  <option value="Defective / Quality issues">Defective / Poor Quality issues</option>
+                  <option value="Item not as described">Item not matching descriptions</option>
+                  <option value="Other">Other / Size exchange request</option>
+                </select>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-muted)" }}>Detailed Comments</label>
+                <textarea
+                  value={comments}
+                  onChange={(e) => setComments(e.target.value)}
+                  placeholder="Explain the issue details..."
+                  rows="3"
+                  className="form-input"
+                  style={{ resize: "none" }}
+                  required
+                />
+              </div>
+
+              {/* Photo Proof */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-muted)" }}>Image Proof (Required)</label>
+                <div style={{ position: "relative" }}>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      if (e.target.files[0]) {
+                        setImageFile(e.target.files[0]);
+                        setImageLink(""); // Clear manual link if file selected
+                      }
+                    }}
+                    required={!imageLink && !imageFile}
+                    className="form-input"
+                    style={{ paddingLeft: "44px", paddingTop: "8px", paddingBottom: "8px" }}
+                  />
+                  <Camera size={16} style={{ position: "absolute", left: "16px", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                </div>
+                {imageFile && <span style={{ fontSize: "12px", color: "var(--primary)", fontWeight: "600", marginTop: "4px" }}>Selected: {imageFile.name}</span>}
+                <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Please upload a clear photo showing the issue.</span>
+              </div>
+
+              {/* Bank Account Details */}
+              {!(selectedOrder?.paymentMethod === "Prepaid" || (selectedOrder?.paymentId && selectedOrder?.paymentId.startsWith("pay_"))) && (
+                <div style={{ background: "rgba(16, 185, 129, 0.05)", border: "1px solid rgba(16, 185, 129, 0.2)", borderRadius: "18px", padding: "20px" }}>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center", color: "var(--success)", fontWeight: "700", fontSize: "14px", marginBottom: "16px" }}>
+                    <IndianRupee size={18} />
+                    <span>Refund Bank Account Details</span>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                      <label style={{ fontSize: "11px", fontWeight: "700", color: "var(--text-muted)" }}>Beneficiary Holder Name</label>
+                      <input type="text" name="name" value={bankDetails.name} onChange={handleReturnInputChange} required placeholder="Account Holder" className="form-input" style={{ padding: "10px 14px", fontSize: "13px" }} />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                      <label style={{ fontSize: "11px", fontWeight: "700", color: "var(--text-muted)" }}>Account Number</label>
+                      <input type="text" name="accNo" value={bankDetails.accNo} onChange={handleReturnInputChange} required placeholder="Account Number" className="form-input" style={{ padding: "10px 14px", fontSize: "13px" }} />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                      <label style={{ fontSize: "11px", fontWeight: "700", color: "var(--text-muted)" }}>Bank Name</label>
+                      <input type="text" name="bankName" value={bankDetails.bankName} onChange={handleReturnInputChange} required placeholder="e.g. HDFC Bank" className="form-input" style={{ padding: "10px 14px", fontSize: "13px" }} />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                      <label style={{ fontSize: "11px", fontWeight: "700", color: "var(--text-muted)" }}>IFSC Code</label>
+                      <input type="text" name="ifsc" value={bankDetails.ifsc} onChange={handleReturnInputChange} required placeholder="e.g. HDFC0001234" className="form-input" style={{ padding: "10px 14px", fontSize: "13px" }} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Submit Buttons */}
+              <div style={{ display: "flex", gap: "16px", marginTop: "12px", borderTop: "1px solid var(--border-color)", paddingTop: "16px" }}>
+                <button type="button" onClick={() => setSelectedOrder(null)} className="btn btn-secondary" style={{ flexGrow: 1 }} disabled={submittingReturn}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingReturn}
+                  className="btn btn-primary"
+                  style={{ flexGrow: 1 }}
+                >
+                  {submittingReturn ? "Submitting..." : "Submit Request"}
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EXCHANGE REQUEST POPUP MODAL */}
+      {exchangeOrder && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(15, 23, 42, 0.6)",
+          backdropFilter: "blur(4px)",
+          zIndex: 2000,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "20px"
+        }}>
+          <div className="glass-card" style={{
+            width: "100%",
+            maxWidth: "600px",
+            background: "var(--bg-card)",
+            padding: "32px",
+            maxHeight: "90vh",
+            overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
+            gap: "24px"
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border-color)", paddingBottom: "16px" }}>
+              <div>
+                <h3 style={{ fontSize: "20px", fontWeight: "800" }}>Request Exchange</h3>
+                <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>Order Reference: #{exchangeOrder.id}</span>
+              </div>
+              <button onClick={() => setExchangeOrder(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitExchange} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+
+              {/* Items Selection */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                <label style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-muted)" }}>Select Items to Exchange & New Size</label>
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px", border: "1px solid var(--border-color)", borderRadius: "12px", padding: "16px", background: "rgba(0,0,0,0.02)" }}>
+                  {exchangeOrder.products?.map((prod, i) => {
+                    const isSelected = exchangeItems.some(item => item.id === prod.id && item.variantKey === (prod.variantSize || 'default'));
+                    const selectedExchangeItem = exchangeItems.find(item => item.id === prod.id && item.variantKey === (prod.variantSize || 'default'));
+                    const prodId = prod.productid || prod.id;
+                    const availableVariants = productVariantsCache[prodId] || [];
+                    const isAlreadyRequested = prod.returnStatus || prod.exchangeStatus;
+
+                    return (
+                      <div key={i} style={{ display: "flex", flexDirection: "column", gap: "12px", borderBottom: i < exchangeOrder.products.length - 1 ? "1px solid var(--border-color)" : "none", paddingBottom: i < exchangeOrder.products.length - 1 ? "12px" : "0", opacity: isAlreadyRequested ? 0.5 : 1 }}>
+                        <label style={{ display: "flex", gap: "12px", alignItems: "flex-start", cursor: isAlreadyRequested ? "not-allowed" : "pointer" }}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={isAlreadyRequested}
+                            onChange={() => handleToggleExchangeItem(prod)}
+                            style={{ marginTop: "4px" }}
+                          />
+                          <div style={{ flexGrow: 1 }}>
+                            <div style={{ fontSize: "14px", fontWeight: "700" }}>{prod.name}</div>
+                            <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                              Current Size: {prod.variantSize || "Standard"} | Qty: {prod.quantity}
+                              {isAlreadyRequested && <span style={{ color: "var(--warning)", marginLeft: "8px", fontWeight: "600" }}>(Already Requested)</span>}
+                            </div>
+                          </div>
+                        </label>
+
+                        {isSelected && availableVariants.length > 0 && (
+                          <div style={{ marginLeft: "28px", padding: "12px", background: "var(--bg-card)", borderRadius: "8px", border: "1px solid var(--primary-glow)" }}>
+                            <label style={{ fontSize: "12px", fontWeight: "700", color: "var(--primary)", display: "block", marginBottom: "6px" }}>Select New Size (Optional)</label>
+                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                              {availableVariants.map((v, idx) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  disabled={Number(v.stock) <= 0}
+                                  onClick={() => handleExchangeVariantSelect(prod.id, prod.variantSize || 'default', v)}
+                                  style={{
+                                    padding: "6px 12px",
+                                    borderRadius: "8px",
+                                    fontSize: "12px",
+                                    fontWeight: "600",
+                                    border: selectedExchangeItem?.newVariantSku === v.sku ? "2px solid var(--primary)" : "1px solid var(--border-color)",
+                                    background: selectedExchangeItem?.newVariantSku === v.sku ? "var(--primary-glow)" : "var(--bg-card)",
+                                    color: Number(v.stock) <= 0 ? "var(--text-muted)" : "var(--text-main)",
+                                    cursor: Number(v.stock) <= 0 ? "not-allowed" : "pointer",
+                                    opacity: Number(v.stock) <= 0 ? 0.5 : 1
+                                  }}
+                                >
+                                  {v.size} {Number(v.stock) <= 0 && "(Out of Stock)"}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Exchange Details */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-muted)" }}>Reason for Exchange</label>
+                <select
+                  value={exchangeReason}
+                  onChange={(e) => setExchangeReason(e.target.value)}
+                  style={{
+                    padding: "12px",
+                    borderRadius: "12px",
+                    border: "1px solid var(--border-color)",
+                    background: "var(--bg-card)",
+                    color: "var(--text-main)",
+                    outline: "none"
+                  }}
+                >
+                  <option value="Size Issue">Size Issue (Too big/small)</option>
+                  <option value="Defective / Quality issues">Defective / Poor Quality issues</option>
+                  <option value="Wrong Item Delivered">Wrong Item / Color Delivered</option>
+                  <option value="Item not as described">Item not matching descriptions</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-muted)" }}>Detailed Comments</label>
+                <textarea
+                  value={exchangeComments}
+                  onChange={(e) => setExchangeComments(e.target.value)}
+                  placeholder="Explain the issue details..."
+                  rows="3"
+                  className="form-input"
+                  style={{ resize: "none" }}
+                  required
+                />
+              </div>
+
+              {/* Photo Proof */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-muted)" }}>Image Proof (Required)</label>
+                <div style={{ position: "relative" }}>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      if (e.target.files[0]) {
+                        setExchangeImageFile(e.target.files[0]);
+                      }
+                    }}
+                    required={!exchangeImageFile}
+                    className="form-input"
+                    style={{ paddingLeft: "44px", paddingTop: "8px", paddingBottom: "8px" }}
+                  />
+                  <Camera size={16} style={{ position: "absolute", left: "16px", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                </div>
+                {exchangeImageFile && <span style={{ fontSize: "12px", color: "var(--primary)", fontWeight: "600", marginTop: "4px" }}>Selected: {exchangeImageFile.name}</span>}
+                <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Please upload a clear photo showing the item defect or size label.</span>
+              </div>
+
+              {/* Submit Buttons */}
+              <div style={{ display: "flex", gap: "16px", marginTop: "12px", borderTop: "1px solid var(--border-color)", paddingTop: "16px" }}>
+                <button type="button" onClick={() => setExchangeOrder(null)} className="btn btn-secondary" style={{ flexGrow: 1 }} disabled={submittingExchange}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingExchange || exchangeItems.length === 0}
+                  className="btn btn-primary"
+                  style={{ flexGrow: 1 }}
+                >
+                  {submittingExchange ? "Submitting..." : "Submit Exchange Request"}
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}

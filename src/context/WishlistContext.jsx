@@ -1,0 +1,189 @@
+import React, { createContext, useContext, useState, useEffect } from "react";
+import { auth, db } from "../firebase";
+import { doc, collection, getDocs, getDoc, setDoc, deleteDoc, query, where } from "firebase/firestore";
+
+const WishlistContext = createContext();
+
+export function WishlistProvider({ children }) {
+  const [wishlist, setWishlist] = useState(() => {
+    try {
+      const stored = localStorage.getItem("vistaraa_wishlist");
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("vistaraa_wishlist", JSON.stringify(wishlist));
+  }, [wishlist]);
+
+  // Auth sync logic for Wishlist
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        try {
+          // 1. Fetch current favorites from Firestore
+          const favRef = collection(db, "users", user.uid, "favorites");
+          const snap = await getDocs(favRef);
+          const firestoreFavs = snap.docs.map(doc => ({ ...doc.data(), docId: doc.id }));
+
+          // 2. Fetch full product details and normalize legacy IDs
+          const fetchedProducts = [];
+          for (const fav of firestoreFavs) {
+            if (fav.productid) {
+              // Self-healing: Normalize document ID
+              if (fav.docId !== fav.productid) {
+                console.log(`Self-healing: Normalizing wishlist doc ${fav.docId} -> ${fav.productid}`);
+                await setDoc(doc(db, "users", user.uid, "favorites", fav.productid), {
+                  favoriteId: fav.productid,
+                  productid: fav.productid,
+                  customerId: user.uid
+                });
+                await deleteDoc(doc(db, "users", user.uid, "favorites", fav.docId)).catch(() => {});
+              }
+
+              const docRef = doc(db, "products", fav.productid);
+              const prodDoc = await getDoc(docRef);
+              if (prodDoc.exists()) {
+                fetchedProducts.push({ id: prodDoc.id, ...prodDoc.data() });
+              } else {
+                try {
+                  await deleteDoc(doc(db, "users", user.uid, "favorites", fav.productid));
+                } catch (e) {
+                  console.error("Failed to delete orphaned favorite:", e);
+                }
+              }
+            }
+          }
+
+          // 3. Merge local storage wishlist into Firestore
+          const localWishlist = [...wishlist];
+          const mergedWishlist = [...fetchedProducts];
+
+          for (const item of localWishlist) {
+            const exists = mergedWishlist.some(w => w.id === item.id);
+            if (!exists) {
+              const favData = {
+                favoriteId: item.id,
+                productid: item.id,
+                customerId: user.uid
+              };
+              await setDoc(doc(db, "users", user.uid, "favorites", item.id), favData);
+              mergedWishlist.push(item);
+            }
+          }
+
+          // 4. Update state
+          setWishlist(mergedWishlist);
+        } catch (err) {
+          console.error("Error syncing wishlist with Firestore:", err);
+        }
+      } else {
+        setWishlist([]);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const addToWishlist = async (product) => {
+    setWishlist((prev) => {
+      if (prev.some((item) => item.id === product.id)) return prev;
+      return [...prev, product];
+    });
+
+    if (auth.currentUser) {
+      const favData = {
+        favoriteId: product.id,
+        productid: product.id,
+        customerId: auth.currentUser.uid
+      };
+      try {
+        await setDoc(doc(db, "users", auth.currentUser.uid, "favorites", product.id), favData);
+      } catch (err) {
+        console.error("Firestore add to favorites error:", err);
+      }
+    }
+  };
+
+  const removeFromWishlist = async (id) => {
+    // Optimistic UI update
+    setWishlist((prev) => prev.filter((item) => item.id !== id));
+    
+    if (auth.currentUser) {
+      try {
+        await deleteDoc(doc(db, "users", auth.currentUser.uid, "favorites", id));
+        const favRef = collection(db, "users", auth.currentUser.uid, "favorites");
+        const q = query(favRef, where("productid", "==", id));
+        const snap = await getDocs(q);
+        snap.forEach(d => {
+           deleteDoc(d.ref).catch(()=>{});
+        });
+      } catch (err) {
+        console.error("Firestore delete from favorites error:", id, err);
+      }
+    }
+  };
+
+  const toggleWishlist = async (product) => {
+    const exists = wishlist.some((item) => item.id === product.id);
+    if (exists) {
+      // Optimistic UI update
+      setWishlist((prev) => prev.filter((item) => item.id !== product.id));
+      
+      if (auth.currentUser) {
+        try {
+          await deleteDoc(doc(db, "users", auth.currentUser.uid, "favorites", product.id));
+        } catch (err) {
+          console.error("Firestore delete from favorites error:", product.id, err);
+        }
+      }
+    } else {
+      // Optimistic UI update
+      setWishlist((prev) => [...prev, product]);
+      
+      if (auth.currentUser) {
+        const favData = {
+          favoriteId: product.id,
+          productid: product.id,
+          customerId: auth.currentUser.uid
+        };
+        try {
+          await setDoc(doc(db, "users", auth.currentUser.uid, "favorites", product.id), favData);
+        } catch (err) {
+          console.error("Firestore add to favorites error:", err);
+        }
+      }
+    }
+  };
+
+  const isInWishlist = (id) => {
+    return wishlist.some((item) => item.id === id);
+  };
+
+  const wishlistCount = wishlist.length;
+
+  return (
+    <WishlistContext.Provider
+      value={{
+        wishlist,
+        addToWishlist,
+        removeFromWishlist,
+        toggleWishlist,
+        isInWishlist,
+        wishlistCount,
+      }}
+    >
+      {children}
+    </WishlistContext.Provider>
+  );
+}
+
+export function useWishlist() {
+  const context = useContext(WishlistContext);
+  if (!context) {
+    throw new Error("useWishlist must be used within a WishlistProvider");
+  }
+  return context;
+}
