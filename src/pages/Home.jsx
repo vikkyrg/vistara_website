@@ -35,7 +35,7 @@ export default function Home() {
         setCategories(categoriesData.slice(0, 8)); // top 8 categories
 
         // 3. Fetch latest products
-        const productsSnap = await getDocs(query(collection(db, "products"), limit(8)));
+        const productsSnap = await getDocs(query(collection(db, "products"), where("status", "==", "approved"), limit(8)));
         const productsData = productsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setLatestProducts(productsData);
 
@@ -63,6 +63,7 @@ export default function Home() {
             query(
               collection(db, "products"),
               where("category", "in", viewedCategories.slice(0, 10)),
+              where("status", "==", "approved"),
               limit(10)
             )
           );
@@ -73,7 +74,7 @@ export default function Home() {
 
         // If we don't have enough recommendations, backfill with general products
         if (recommendedProducts.length < 4) {
-          const generalSnap = await getDocs(query(collection(db, "products"), limit(12)));
+          const generalSnap = await getDocs(query(collection(db, "products"), where("status", "==", "approved"), limit(12)));
           const generalProducts = generalSnap.docs
             .map(doc => ({ id: doc.id, ...doc.data() }))
             .filter(p => !viewedIds.includes(p.id)); // exclude already viewed

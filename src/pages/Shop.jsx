@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../firebase";
 import ProductCard from "../components/ProductCard";
 import { Filter, RotateCcw, Search, Grid, List, ChevronDown } from "lucide-react";
@@ -41,7 +41,7 @@ export default function Shop() {
         setLoading(true);
 
         const [productsSnap, categoriesSnap, subcategoriesSnap] = await Promise.all([
-          getDocs(collection(db, "products")),
+          getDocs(query(collection(db, "products"), where("status", "==", "approved"))),
           getDocs(collection(db, "categories")),
           getDocs(collection(db, "subcategories"))
         ]);
