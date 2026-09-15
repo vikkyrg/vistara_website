@@ -36,6 +36,8 @@ export default function Checkout() {
   const [placedOrderId, setPlacedOrderId] = useState("");
   const [detectingLocation, setDetectingLocation] = useState(false);
   const [sellerData, setSellerData] = useState(null);
+  const [phoneError, setPhoneError] = useState("");
+  const [emailError, setEmailError] = useState("");
   const [orderedItems, setOrderedItems] = useState([]);
 
   useEffect(() => {
@@ -126,10 +128,42 @@ export default function Checkout() {
   }
 
   const handleInputChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-    if (e.target.name === "pincode") {
+    const { name, value } = e.target;
+
+    // Phone: allow only digits, max 10
+    if (name === "phone") {
+      const digitsOnly = value.replace(/\D/g, "").slice(0, 10);
+      setFormData({ ...formData, phone: digitsOnly });
+      if (phoneError) setPhoneError(""); // Clear error when user starts typing
+      return;
+    }
+
+    // Email: clear error when user starts typing
+    if (name === "email") {
+      setFormData({ ...formData, email: value });
+      if (emailError) setEmailError(""); // Clear error when user starts typing
+      return;
+    }
+
+    setFormData({ ...formData, [name]: value });
+    if (name === "pincode") {
       setShippingCharges(null);
       setShippingError("");
+    }
+  };
+
+  // Validate phone only when user leaves the field
+  const handlePhoneBlur = () => {
+    if (formData.phone.length > 0 && formData.phone.length !== 10) {
+      setPhoneError("Phone number must be exactly 10 digits");
+    }
+  };
+
+  // Validate email only when user leaves the field
+  const handleEmailBlur = () => {
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (formData.email.length > 0 && !emailRegex.test(formData.email)) {
+      setEmailError("Please enter a valid email (e.g. name@gmail.com)");
     }
   };
 
@@ -460,6 +494,21 @@ export default function Checkout() {
       return;
     }
 
+    // Validate phone: exactly 10 digits
+    if (!/^\d{10}$/.test(phone)) {
+      setPhoneError("Phone number must be exactly 10 digits");
+      alert("Please enter a valid 10-digit phone number.");
+      return;
+    }
+
+    // Validate email format
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(email)) {
+      setEmailError("Please enter a valid email (e.g. name@gmail.com)");
+      alert("Please enter a valid email address.");
+      return;
+    }
+
     if (shippingCharges === null) {
       alert("Please verify your pincode to calculate shipping fees before checkout.");
       return;
@@ -701,14 +750,16 @@ export default function Checkout() {
                   <input type="text" name="name" value={formData.name} onChange={handleInputChange} required placeholder="Full Name" className="form-input" />
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                  <label style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-muted)" }}>Phone Number</label>
-                  <input type="tel" name="phone" value={formData.phone} onChange={handleInputChange} required placeholder="10-digit Phone" className="form-input" />
+                  <label style={{ fontSize: "13px", fontWeight: "700", color: phoneError ? "#dc2626" : "var(--text-muted)" }}>Phone Number</label>
+                  <input type="tel" name="phone" value={formData.phone} onChange={handleInputChange} onBlur={handlePhoneBlur} required placeholder="10-digit Phone" className="form-input" maxLength="10" inputMode="numeric" pattern="[0-9]*" style={phoneError ? { border: "2px solid #dc2626", outline: "none" } : {}} />
+                  {phoneError && <span style={{ fontSize: "12px", color: "#dc2626", fontWeight: "600" }}>{phoneError}</span>}
                 </div>
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                <label style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-muted)" }}>Email Address</label>
-                <input type="email" name="email" value={formData.email} onChange={handleInputChange} required placeholder="email@address.com" className="form-input" />
+                <label style={{ fontSize: "13px", fontWeight: "700", color: emailError ? "#dc2626" : "var(--text-muted)" }}>Email Address</label>
+                <input type="email" name="email" value={formData.email} onChange={handleInputChange} onBlur={handleEmailBlur} required placeholder="name@gmail.com" className="form-input" style={emailError ? { border: "2px solid #dc2626", outline: "none" } : {}} />
+                {emailError && <span style={{ fontSize: "12px", color: "#dc2626", fontWeight: "600" }}>{emailError}</span>}
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
