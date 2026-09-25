@@ -23,6 +23,7 @@ export default function ProductDetails() {
   // Success state for add button
   const [added, setAdded] = useState(false);
   const [isDescExpanded, setIsDescExpanded] = useState(false);
+  const [isSpecsExpanded, setIsSpecsExpanded] = useState(false);
 
   // Reviews state
   const [reviews, setReviews] = useState([]);
@@ -315,74 +316,83 @@ export default function ProductDetails() {
 
   return (
     <div style={{ paddingTop: "120px", paddingBottom: "80px" }}>
-      <div className="container">
+      <div className="container" style={{ maxWidth: "1280px", margin: "0 auto", paddingLeft: "20px", paddingRight: "20px" }}>
         {/* Back Link */}
-        <Link to="/shop" style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: "var(--text-muted)", fontWeight: "600", marginBottom: "32px" }}>
+        <Link to="/shop" style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: "var(--text-muted)", fontWeight: "600", marginBottom: "28px" }}>
           <ArrowLeft size={16} /> Back to Catalog
         </Link>
 
-        {/* Product Details Grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "60px", alignItems: "start" }} className="details-layout-grid">
+        {/* ================= AREA 1: TOP PRODUCT SECTION (TWO COLUMNS) ================= */}
+        <div className="details-top-grid" style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: "50px", alignItems: "start" }}>
 
-          {/* Left: Images Gallery */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          {/* LEFT COLUMN: Sticky Product Image Gallery */}
+          <div className="details-gallery-sticky" style={{ position: "sticky", top: "110px", display: "flex", flexDirection: "column", gap: "16px" }}>
+            {/* Main Product Image Container */}
             <div className="glass-card" style={{
               width: "100%",
-              paddingBottom: "100%",
+              aspectRatio: "1 / 1",
               position: "relative",
               borderRadius: "24px",
               overflow: "hidden",
-              background: "#f8fafc"
+              background: "#ffffff",
+              border: "1px solid var(--border-color)",
+              boxShadow: "0 10px 30px rgba(0,0,0,0.03)"
             }}>
               <img
                 src={selectedImage}
                 alt={product.name}
                 style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
                   width: "100%",
                   height: "100%",
-                  objectFit: "cover",
+                  objectFit: "contain",
+                  padding: "16px",
                   transition: "all 0.3s ease"
                 }}
               />
             </div>
 
-            {/* Thumbnails list */}
+            {/* Thumbnails List */}
             {product.images?.length > 1 && (
-              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                {product.images.map((img, index) => (
-                  <button
-                    key={index}
-                    onClick={() => setSelectedImage(img.url)}
-                    style={{
-                      width: "80px",
-                      height: "80px",
-                      borderRadius: "12px",
-                      overflow: "hidden",
-                      border: selectedImage === img.url ? "2px solid var(--primary)" : "2px solid var(--border-color)",
-                      padding: 0,
-                      cursor: "pointer",
-                      transition: "all 0.2s"
-                    }}
-                  >
-                    <img src={img.url} alt={`Thumbnail ${index}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  </button>
-                ))}
+              <div style={{ display: "flex", gap: "14px", overflowX: "auto", paddingBottom: "6px", scrollbarWidth: "thin" }} className="gallery-thumbnails-row">
+                {product.images.map((img, index) => {
+                  const isSelected = selectedImage === img.url;
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => setSelectedImage(img.url)}
+                      style={{
+                        width: "80px",
+                        height: "80px",
+                        minWidth: "80px",
+                        borderRadius: "14px",
+                        overflow: "hidden",
+                        background: "#ffffff",
+                        border: isSelected ? "2.5px solid var(--primary)" : "1.5px solid var(--border-color)",
+                        padding: "4px",
+                        cursor: "pointer",
+                        transition: "all 0.2s ease",
+                        boxShadow: isSelected ? "0 4px 12px rgba(99, 102, 241, 0.15)" : "none"
+                      }}
+                      className="thumbnail-btn"
+                    >
+                      <img src={img.url} alt={`Thumbnail ${index + 1}`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
 
-          {/* Right: Info Section */}
+          {/* RIGHT COLUMN: Product Information & Purchase Controls */}
           <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+            {/* Title & Category */}
             <div>
               <span style={{
                 fontSize: "12px",
                 fontWeight: "800",
                 textTransform: "uppercase",
                 letterSpacing: "0.1em",
-                color: "var(--text-muted)",
+                color: "var(--primary)",
                 display: "inline-flex",
                 alignItems: "center",
                 gap: "6px",
@@ -391,11 +401,11 @@ export default function ProductDetails() {
                 <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "var(--primary)", flexShrink: 0 }}></span>
                 {product.categoryName || "General"}
               </span>
-              <h1 style={{ fontSize: "clamp(24px, 4vw, 36px)", fontWeight: "900", lineHeight: "1.2", marginBottom: "12px" }}>
+              <h1 style={{ fontSize: "clamp(24px, 3.5vw, 34px)", fontWeight: "900", lineHeight: "1.25", marginBottom: "12px", color: "var(--text-main)" }}>
                 {product.name}
               </h1>
 
-              {/* Reviews UI */}
+              {/* Rating & Reviews summary */}
               <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "14px", color: "var(--text-muted)" }}>
                 <div style={{ display: "flex", color: "#f59e0b" }}>
                   {[...Array(5)].map((_, i) => (
@@ -409,11 +419,11 @@ export default function ProductDetails() {
               </div>
             </div>
 
-            {/* Pricing Section */}
-            <div style={{ padding: "20px", borderRadius: "18px", background: "var(--bg-card)", border: "1px solid var(--border-color)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            {/* Pricing Box */}
+            <div style={{ padding: "20px 24px", borderRadius: "20px", background: "var(--bg-card)", border: "1px solid var(--border-color)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                <span style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: "600" }}>CURRENT PRICE</span>
-                <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
+                <span style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: "700", letterSpacing: "0.05em" }}>CURRENT PRICE</span>
+                <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
                   <span style={{ fontSize: "32px", fontWeight: "900", color: "var(--text-main)" }}>₹{currentPrice.toLocaleString()}</span>
                   {hasDiscount && (
                     <span style={{ fontSize: "16px", color: "var(--text-muted)", textDecoration: "line-through" }}>₹{originalPrice.toLocaleString()}</span>
@@ -427,6 +437,22 @@ export default function ProductDetails() {
                 </span>
               )}
             </div>
+
+            {/* Key Highlights */}
+            {Array.isArray(product.productHighlights) && product.productHighlights.length > 0 && (
+              <div style={{ padding: "18px 22px", borderRadius: "20px", background: "var(--bg-card)", border: "1px solid var(--border-color)" }}>
+                <span style={{ fontSize: "12px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--primary)", display: "block", marginBottom: "10px" }}>
+                  Key Highlights
+                </span>
+                <ul style={{ display: "flex", flexDirection: "column", gap: "8px", margin: 0, paddingLeft: 0, listStyle: "none" }}>
+                  {product.productHighlights.map((hl, idx) => (
+                    <li key={idx} style={{ fontSize: "13px", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "10px", lineHeight: "1.4" }}>
+                      <span style={{ color: "var(--primary)", fontWeight: "bold", fontSize: "14px" }}>✓</span> {hl}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {/* Variants Selector */}
             {product.variants?.length > 0 && (
@@ -449,11 +475,10 @@ export default function ProductDetails() {
               </div>
             )}
 
-            {/* Purchase Control Section */}
+            {/* Purchase Controls Section */}
             <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-              {/* Row 1: Quantity and Wishlist */}
+              {/* Quantity Selector & Wishlist */}
               <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
-                {/* Quantity selectors */}
                 <div style={{
                   display: "flex",
                   alignItems: "center",
@@ -487,7 +512,7 @@ export default function ProductDetails() {
                   </button>
                 </div>
 
-                {/* Wishlist toggle button */}
+                {/* Wishlist Button */}
                 <button
                   onClick={() => toggleWishlist(product)}
                   style={{
@@ -511,9 +536,8 @@ export default function ProductDetails() {
                 </button>
               </div>
 
-              {/* Row 2: Add to Cart and Buy Now Buttons */}
+              {/* Add to Cart & Buy Now Buttons */}
               <div style={{ display: "flex", gap: "16px" }}>
-                {/* Add to Cart button */}
                 <button
                   onClick={handleAddToCart}
                   disabled={isOutOfStock}
@@ -532,7 +556,6 @@ export default function ProductDetails() {
                   )}
                 </button>
 
-                {/* Buy Now button */}
                 <button
                   onClick={handleBuyNow}
                   disabled={isOutOfStock}
@@ -543,8 +566,8 @@ export default function ProductDetails() {
               </div>
             </div>
 
-            {/* Shipping Info Card */}
-            <div style={{ padding: "16px", border: "1px solid var(--border-color)", borderRadius: "18px", background: "var(--primary-glow)" }}>
+            {/* Shipping Serviceability Badge */}
+            <div style={{ padding: "16px 20px", border: "1px solid var(--border-color)", borderRadius: "18px", background: "var(--primary-glow)" }}>
               <div style={{ display: "flex", gap: "12px", alignItems: "center", color: "var(--primary)" }}>
                 <Truck size={18} />
                 <span style={{ fontSize: "13px", fontWeight: "700" }}>Shiprocket Courier Serviceability</span>
@@ -553,131 +576,243 @@ export default function ProductDetails() {
                 Add this item to cart and proceed to checkout to check real-time courier shipping charges to your pincode.
               </p>
             </div>
+          </div>
 
-            {/* Description Tab selectors */}
-            <div style={{ marginTop: "12px" }}>
-              <div style={{ display: "flex", borderBottom: "1px solid var(--border-color)", gap: "24px", marginBottom: "16px" }}>
-                <button
-                  onClick={() => setActiveTab("desc")}
-                  style={{
-                    paddingBottom: "12px",
-                    border: "none",
-                    background: "none",
-                    borderBottom: activeTab === "desc" ? "2px solid var(--primary)" : "none",
-                    color: activeTab === "desc" ? "var(--text-main)" : "var(--text-muted)",
-                    fontWeight: "700",
-                    cursor: "pointer"
-                  }}
-                >
-                  Description
-                </button>
-                <button
-                  onClick={() => setActiveTab("specs")}
-                  style={{
-                    paddingBottom: "12px",
-                    border: "none",
-                    background: "none",
-                    borderBottom: activeTab === "specs" ? "2px solid var(--primary)" : "none",
-                    color: activeTab === "specs" ? "var(--text-main)" : "var(--text-muted)",
-                    fontWeight: "700",
-                    cursor: "pointer"
-                  }}
-                >
-                  Specifications
-                </button>
-                <button
-                  onClick={() => setActiveTab("reviews")}
-                  style={{
-                    paddingBottom: "12px",
-                    border: "none",
-                    background: "none",
-                    borderBottom: activeTab === "reviews" ? "2px solid var(--primary)" : "none",
-                    color: activeTab === "reviews" ? "var(--text-main)" : "var(--text-muted)",
-                    fontWeight: "700",
-                    cursor: "pointer"
-                  }}
-                >
-                  Reviews ({product.reviewCount || 0})
-                </button>
+        </div>
+
+        {/* ================= AREA 2: BELOW PRODUCT SECTION (FULL-WIDTH LAYOUT) ================= */}
+        <div className="details-fullwidth-section" style={{ marginTop: "60px", paddingTop: "40px", borderTop: "1px solid var(--border-color)", width: "100%" }}>
+          
+          {/* Full-Width Navigation Tabs */}
+          <div style={{ display: "flex", borderBottom: "2px solid var(--border-color)", gap: "32px", marginBottom: "32px" }}>
+            <button
+              onClick={() => setActiveTab("desc")}
+              style={{
+                paddingBottom: "16px",
+                border: "none",
+                background: "none",
+                borderBottom: activeTab === "desc" ? "3px solid var(--primary)" : "3px solid transparent",
+                marginBottom: "-2px",
+                color: activeTab === "desc" ? "var(--primary)" : "var(--text-muted)",
+                fontWeight: "800",
+                fontSize: "16px",
+                cursor: "pointer",
+                transition: "all 0.2s"
+              }}
+            >
+              Description
+            </button>
+            <button
+              onClick={() => setActiveTab("specs")}
+              style={{
+                paddingBottom: "16px",
+                border: "none",
+                background: "none",
+                borderBottom: activeTab === "specs" ? "3px solid var(--primary)" : "3px solid transparent",
+                marginBottom: "-2px",
+                color: activeTab === "specs" ? "var(--primary)" : "var(--text-muted)",
+                fontWeight: "800",
+                fontSize: "16px",
+                cursor: "pointer",
+                transition: "all 0.2s"
+              }}
+            >
+              Specifications
+            </button>
+            <button
+              onClick={() => setActiveTab("reviews")}
+              style={{
+                paddingBottom: "16px",
+                border: "none",
+                background: "none",
+                borderBottom: activeTab === "reviews" ? "3px solid var(--primary)" : "3px solid transparent",
+                marginBottom: "-2px",
+                color: activeTab === "reviews" ? "var(--primary)" : "var(--text-muted)",
+                fontWeight: "800",
+                fontSize: "16px",
+                cursor: "pointer",
+                transition: "all 0.2s"
+              }}
+            >
+              Reviews ({product.reviewCount || 0})
+            </button>
+          </div>
+
+          {/* Tab Content Area (Full-Width) */}
+          <div style={{ width: "100%" }}>
+            {activeTab === "desc" ? (
+              <div style={{ width: "100%", background: "var(--bg-card)", padding: "28px 32px", borderRadius: "20px", border: "1px solid var(--border-color)" }}>
+                <p style={{ fontSize: "15px", color: "var(--text-muted)", lineHeight: "1.8", whiteSpace: "pre-line" }}>
+                  {displayedDesc}
+                </p>
+                {showReadMore && (
+                  <button
+                    onClick={() => setIsDescExpanded(!isDescExpanded)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "var(--primary)",
+                      fontWeight: "700",
+                      fontSize: "15px",
+                      cursor: "pointer",
+                      padding: "8px 0",
+                      marginTop: "12px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px"
+                    }}
+                    className="read-more-btn"
+                  >
+                    {isDescExpanded ? "Read Less ↑" : "Read More ↓"}
+                  </button>
+                )}
               </div>
+            ) : activeTab === "specs" ? (
+              (() => {
+                const validSpecs = [];
+                if (product.categoryName) validSpecs.push({ name: "Category", value: product.categoryName });
+                if (product.subcategoryName) validSpecs.push({ name: "Subcategory", value: product.subcategoryName });
+                if (product.brand) validSpecs.push({ name: "Brand", value: product.brand });
+                if (product.hsn) validSpecs.push({ name: "HSN Code", value: product.hsn });
 
-              {activeTab === "desc" ? (
-                <div>
-                  <p style={{ fontSize: "14px", color: "var(--text-muted)", lineHeight: "1.7", whiteSpace: "pre-line" }}>
-                    {displayedDesc}
-                  </p>
-                  {showReadMore && (
-                    <button
-                      onClick={() => setIsDescExpanded(!isDescExpanded)}
+                if (Array.isArray(product.specifications)) {
+                  product.specifications.forEach(s => {
+                    if (s && s.name && String(s.name).trim() && s.value && String(s.value).trim()) {
+                      validSpecs.push({ name: String(s.name).trim(), value: String(s.value).trim() });
+                    }
+                  });
+                } else if (typeof product.specifications === "object" && product.specifications !== null) {
+                  Object.entries(product.specifications).forEach(([k, v]) => {
+                    if (k && String(k).trim() && v && String(v).trim()) {
+                      validSpecs.push({ name: String(k).trim(), value: String(v).trim() });
+                    }
+                  });
+                }
+
+                if (validSpecs.length === 0) {
+                  return (
+                    <div style={{ padding: "36px", textAlign: "center", color: "var(--text-muted)", fontSize: "14px", background: "var(--bg-card)", borderRadius: "16px", border: "1px solid var(--border-color)" }}>
+                      No specifications available for this product.
+                    </div>
+                  );
+                }
+
+                const displayedSpecs = isSpecsExpanded ? validSpecs : validSpecs.slice(0, 5);
+
+                return (
+                  <div style={{ width: "100%" }}>
+                    <div
+                      className="specs-table-wrapper"
                       style={{
-                        background: "none",
-                        border: "none",
-                        color: "var(--primary)",
-                        fontWeight: "700",
-                        fontSize: "14px",
-                        cursor: "pointer",
-                        padding: "4px 0",
-                        marginTop: "8px",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "4px"
+                        maxWidth: "880px",
+                        width: "100%",
+                        margin: "0 auto",
+                        border: "1px solid var(--border-color)",
+                        borderRadius: "16px",
+                        overflow: "hidden",
+                        background: "var(--bg-card)",
+                        boxShadow: "0 2px 8px rgba(0,0,0,0.02)"
                       }}
-                      className="read-more-btn"
                     >
-                      {isDescExpanded ? "Read Less ↑" : "Read More ↓"}
-                    </button>
-                  )}
-                </div>
-              ) : activeTab === "specs" ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "14px" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "150px 1fr", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
-                    <span style={{ fontWeight: "700" }}>HSN Code</span>
-                    <span>{product.hsn || "N/A"}</span>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "150px 1fr", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
-                    <span style={{ fontWeight: "700" }}>Category</span>
-                    <span>{product.categoryName || "General"}</span>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "150px 1fr", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
-                    <span style={{ fontWeight: "700" }}>Subcategory</span>
-                    <span>{product.subcategoryName || "N/A"}</span>
-                  </div>
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-                  
-                  {/* Reviews List */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                    <h3 style={{ fontSize: "16px", fontWeight: "800" }}>Customer Reviews</h3>
-                    {loadingReviews ? (
-                      <div className="shimmer" style={{ height: "100px", borderRadius: "12px" }}></div>
-                    ) : reviews.length === 0 ? (
-                      <p style={{ fontSize: "14px", color: "var(--text-muted)" }}>No reviews yet. Be the first to review this product!</p>
-                    ) : (
-                      reviews.map((rev) => (
-                        <div key={rev.id} style={{ padding: "16px", borderRadius: "12px", border: "1px solid var(--border-color)", background: "var(--bg-card)" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                            <span style={{ fontWeight: "700", fontSize: "14px" }}>{rev.userName || "Customer"}</span>
-                            <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                              {rev.createdAt ? new Date(rev.createdAt.toMillis ? rev.createdAt.toMillis() : rev.createdAt).toLocaleDateString() : ""}
-                            </span>
-                          </div>
-                          <div style={{ display: "flex", color: "#f59e0b", marginBottom: "8px" }}>
-                            {[...Array(5)].map((_, i) => (
-                              <Star key={i} size={14} fill={i < rev.rating ? "#f59e0b" : "none"} color={i < rev.rating ? "#f59e0b" : "var(--text-muted)"} />
-                            ))}
-                          </div>
-                          <p style={{ fontSize: "14px", color: "var(--text-main)", lineHeight: "1.5" }}>{rev.comment}</p>
+                      {/* Table Header */}
+                      <div style={{ display: "grid", gridTemplateColumns: "45% 55%", background: "var(--primary-glow)", borderBottom: "1px solid var(--border-color)" }}>
+                        <div style={{ padding: "12px 20px", fontWeight: "800", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)", borderRight: "1px solid var(--border-color)" }}>
+                          Specification
                         </div>
-                      ))
+                        <div style={{ padding: "12px 20px", fontWeight: "800", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)" }}>
+                          Value
+                        </div>
+                      </div>
+
+                      {/* Table Rows */}
+                      <div style={{ display: "flex", flexDirection: "column" }}>
+                        {displayedSpecs.map((spec, idx) => (
+                          <div
+                            key={idx}
+                            className="compact-spec-row"
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "45% 55%",
+                              borderBottom: idx === displayedSpecs.length - 1 ? "none" : "1px solid var(--border-color)",
+                              background: idx % 2 === 1 ? "rgba(0, 0, 0, 0.015)" : "transparent"
+                            }}
+                          >
+                            <div style={{ padding: "12px 20px", fontWeight: "600", fontSize: "14px", color: "var(--text-main)", borderRight: "1px solid var(--border-color)", display: "flex", alignItems: "center" }}>
+                              {spec.name}
+                            </div>
+                            <div style={{ padding: "12px 20px", fontWeight: "400", fontSize: "14px", color: "var(--text-main)", display: "flex", alignItems: "center", wordBreak: "break-word" }}>
+                              {spec.value}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Show More / Show Less Toggle Button */}
+                    {validSpecs.length > 5 && (
+                      <div style={{ textAlign: "center", paddingTop: "20px" }}>
+                        <button
+                          onClick={() => setIsSpecsExpanded(!isSpecsExpanded)}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: "var(--primary)",
+                            fontWeight: "700",
+                            fontSize: "14px",
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px"
+                          }}
+                          className="show-more-specs-btn"
+                        >
+                          {isSpecsExpanded ? "Show Less ↑" : "Show More ↓"}
+                        </button>
+                      </div>
                     )}
                   </div>
+                );
+              })()
+            ) : (
+              /* Reviews Tab (Full-Width) */
+              <div style={{ display: "flex", flexDirection: "column", gap: "32px", width: "100%" }}>
+                {/* Reviews List */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                  <h3 style={{ fontSize: "18px", fontWeight: "800", margin: 0 }}>Customer Reviews</h3>
+                  {loadingReviews ? (
+                    <div className="shimmer" style={{ height: "120px", borderRadius: "16px" }}></div>
+                  ) : reviews.length === 0 ? (
+                    <div style={{ padding: "32px", borderRadius: "20px", background: "var(--bg-card)", border: "1px solid var(--border-color)", textAlign: "center" }}>
+                      <p style={{ fontSize: "15px", color: "var(--text-muted)", margin: 0 }}>No reviews yet for this product. Be the first to write a review!</p>
+                    </div>
+                  ) : (
+                    reviews.map((rev) => (
+                      <div key={rev.id} style={{ padding: "20px 24px", borderRadius: "18px", border: "1px solid var(--border-color)", background: "var(--bg-card)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                          <span style={{ fontWeight: "800", fontSize: "15px" }}>{rev.userName || "Customer"}</span>
+                          <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                            {rev.createdAt ? new Date(rev.createdAt.toMillis ? rev.createdAt.toMillis() : rev.createdAt).toLocaleDateString() : ""}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", color: "#f59e0b", marginBottom: "10px" }}>
+                          {[...Array(5)].map((_, i) => (
+                            <Star key={i} size={15} fill={i < rev.rating ? "#f59e0b" : "none"} color={i < rev.rating ? "#f59e0b" : "var(--text-muted)"} />
+                          ))}
+                        </div>
+                        <p style={{ fontSize: "14px", color: "var(--text-main)", lineHeight: "1.6", margin: 0 }}>{rev.comment}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
 
-                  {/* Submit Review Form */}
-                  {auth.currentUser ? (
-                    <form onSubmit={handleSubmitReview} style={{ display: "flex", flexDirection: "column", gap: "12px", padding: "20px", borderRadius: "16px", background: "var(--primary-glow)", border: "1px solid var(--border-color)" }}>
-                      <h4 style={{ fontSize: "15px", fontWeight: "700" }}>Write a Review</h4>
-                      {reviewError && <p style={{ color: "var(--error)", fontSize: "13px" }}>{reviewError}</p>}
+                {/* Submit Review Form */}
+                {auth.currentUser ? (
+                  <form onSubmit={handleSubmitReview} style={{ display: "flex", flexDirection: "column", gap: "16px", padding: "28px 32px", borderRadius: "20px", background: "var(--bg-card)", border: "1px solid var(--border-color)" }}>
+                    <h4 style={{ fontSize: "16px", fontWeight: "800", margin: 0 }}>Write a Customer Review</h4>
+                    {reviewError && <p style={{ color: "var(--error)", fontSize: "13px", margin: 0 }}>{reviewError}</p>}
+                    
+                    <div>
+                      <label style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-muted)", display: "block", marginBottom: "8px" }}>Your Rating</label>
                       <div style={{ display: "flex", gap: "8px" }}>
                         {[1, 2, 3, 4, 5].map((star) => (
                           <button
@@ -686,49 +821,68 @@ export default function ProductDetails() {
                             onClick={() => setRating(star)}
                             style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}
                           >
-                            <Star size={24} fill={star <= rating ? "#f59e0b" : "none"} color={star <= rating ? "#f59e0b" : "var(--text-muted)"} />
+                            <Star size={26} fill={star <= rating ? "#f59e0b" : "none"} color={star <= rating ? "#f59e0b" : "var(--text-muted)"} />
                           </button>
                         ))}
                       </div>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-muted)", display: "block", marginBottom: "8px" }}>Your Review</label>
                       <textarea
                         value={comment}
                         onChange={(e) => setComment(e.target.value)}
-                        placeholder="Tell us what you think..."
-                        rows={3}
+                        placeholder="Share your experience with this product..."
+                        rows={4}
                         className="form-input"
-                        style={{ resize: "none" }}
+                        style={{ width: "100%", padding: "12px 16px", borderRadius: "12px", border: "1px solid var(--border-color)", resize: "none" }}
                       />
-                      <button
-                        type="submit"
-                        disabled={submittingReview}
-                        className="btn btn-primary"
-                        style={{ alignSelf: "flex-start", padding: "8px 24px", fontSize: "14px" }}
-                      >
-                        {submittingReview ? "Submitting..." : "Submit Review"}
-                      </button>
-                    </form>
-                  ) : (
-                    <div style={{ padding: "16px", borderRadius: "12px", background: "var(--bg-card)", border: "1px solid var(--border-color)", textAlign: "center" }}>
-                      <p style={{ fontSize: "14px", color: "var(--text-muted)", marginBottom: "12px" }}>Log in to submit a review.</p>
-                      <Link to="/auth" className="btn btn-secondary" style={{ padding: "8px 20px", fontSize: "13px" }}>Login</Link>
                     </div>
-                  )}
 
-                </div>
-              )}
-            </div>
-
+                    <button
+                      type="submit"
+                      disabled={submittingReview}
+                      className="btn btn-primary"
+                      style={{ alignSelf: "flex-start", padding: "12px 28px", fontSize: "14px", fontWeight: "700" }}
+                    >
+                      {submittingReview ? "Submitting..." : "Submit Review"}
+                    </button>
+                  </form>
+                ) : (
+                  <div style={{ padding: "24px", borderRadius: "18px", background: "var(--bg-card)", border: "1px solid var(--border-color)", textAlign: "center" }}>
+                    <p style={{ fontSize: "14px", color: "var(--text-muted)", marginBottom: "14px" }}>Log in to submit a review.</p>
+                    <Link to="/auth" className="btn btn-secondary" style={{ padding: "8px 24px", fontSize: "13px" }}>Login</Link>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-
         </div>
+
       </div>
 
+      {/* Custom Styles for Responsive Grid & Sticky Behavior */}
       <style>{`
-        @media (max-width: 768px) {
-          .details-layout-grid {
+        @media (max-width: 991px) {
+          .details-top-grid {
             grid-template-columns: 1fr !important;
-            gap: 40px !important;
+            gap: 36px !important;
           }
+          .details-gallery-sticky {
+            position: relative !important;
+            top: 0 !important;
+          }
+          .spec-row {
+            grid-template-columns: 40% 60% !important;
+            padding: 14px 20px !important;
+          }
+        }
+        .spec-row:nth-child(even) {
+          background: rgba(0, 0, 0, 0.015);
+        }
+        .thumbnail-btn:hover {
+          border-color: var(--primary) !important;
+          transform: translateY(-2px);
         }
         .details-wishlist-btn:hover {
           transform: translateY(-2px);
@@ -766,7 +920,7 @@ export default function ProductDetails() {
           padding: 16px;
           border-radius: 16px;
           font-size: 15px;
-          font-weight: 600;
+          font-weight: 700;
           background: var(--bg-card);
           color: var(--text-main);
           border: 1px solid var(--border-color);
@@ -801,6 +955,7 @@ export default function ProductDetails() {
           padding: 16px;
           border-radius: 16px;
           font-size: 15px;
+          font-weight: 700;
           cursor: pointer;
           transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
         }
